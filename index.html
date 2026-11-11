@@ -172,7 +172,11 @@
   var theme = params.get("theme");
   if (theme === "light" || theme === "dark") document.documentElement.setAttribute("data-theme", theme);
 
-  var REFRESH_MS = 30 * 60 * 1000;
+  // 갱신 시각 (KST): 9, 12, 15, 18, 21, 24(=0)시
+  var SLOT_HOURS_KST = [0, 9, 12, 15, 18, 21];
+  var KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+  var HOUR_MS = 60 * 60 * 1000;
+  var RETRY_AFTER_SOURCE_UPDATE_MS = 2 * 60 * 1000; // API 갱신 직후 재요청 여유
   var TIMEOUT_MS = 8000;
   var CACHE_KEY = "fxw:" + FROM + ":" + TO;
 
@@ -182,7 +186,7 @@
     amt: $("amt"), out: $("out"), inCode: $("inCode"), outCode: $("outCode"), swap: $("swap")
   };
 
-  var state = { rate: null, reversed: false, lastAttempt: 0 };
+  var state = { rate: null, reversed: false, lastAttempt: 0, timer: null, retryTimer: null };
 
   // ---- 데이터 소스: 1순위 ExchangeRate-API(open), 2순위 fawazahmed0 currency-api (CDN 2곳) ----
   var SOURCES = [
@@ -192,7 +196,7 @@
       url: "https://open.er-api.com/v6/latest/" + FROM,
       parse: function (d) {
         if (!d || d.result !== "success" || !d.rates || typeof d.rates[TO] !== "number") throw new Error("bad data");
-        return { rate: d.rates[TO], updatedAt: d.time_last_update_unix * 1000, dateOnly: false };
+        return { rate: d.rates[TO], updatedAt: d.time_last_update_unix * 1000, nextUpdateAt: d.time_next_update_unix * 1000, dateOnly: false };
       }
     },
     {
@@ -303,12 +307,46 @@
         saveCache(data);
         el.err.textContent = "";
         render(data);
+        scheduleSourceRetry(parsed.nextUpdateAt);
         return;
       } catch (e) { /* 다음 소스로 */ }
     }
     var cached = loadCache();
     if (cached) render(cached);
     showError(!!cached);
+  }
+
+  // ---- 갱신 스케줄 (KST 9·12·15·18·21·24시) ----
+  function slotTimes(now) {
+    // now 기준 KST 어제·오늘·내일의 모든 슬롯 시각(UTC ms)
+    var kstMidnight = Math.floor((now + KST_OFFSET_MS) / (24 * HOUR_MS)) * 24 * HOUR_MS - KST_OFFSET_MS;
+    var out = [];
+    for (var d = -1; d <= 1; d++) {
+      SLOT_HOURS_KST.forEach(function (h) { out.push(kstMidnight + d * 24 * HOUR_MS + h * HOUR_MS); });
+    }
+    return out.sort(function (a, b) { return a - b; });
+  }
+  function nextSlotAt(now) {
+    return slotTimes(now).filter(function (t) { return t > now; })[0];
+  }
+  function lastSlotAt(now) {
+    var past = slotTimes(now).filter(function (t) { return t <= now; });
+    return past[past.length - 1];
+  }
+  function scheduleNextSlot() {
+    clearTimeout(state.timer);
+    var wait = Math.max(1000, nextSlotAt(Date.now()) - Date.now());
+    state.timer = setTimeout(function () { refresh(); scheduleNextSlot(); }, wait);
+  }
+  // 정해진 시각에 받은 값이 API 갱신 직전 값이면(예: 09:00 요청, API는 09:0x 갱신),
+  // API 갱신 예정 시각이 30분 안이면 그 직후 한 번 더 받아온다.
+  function scheduleSourceRetry(nextUpdateAt) {
+    clearTimeout(state.retryTimer);
+    if (!nextUpdateAt) return;
+    var wait = nextUpdateAt - Date.now() + RETRY_AFTER_SOURCE_UPDATE_MS;
+    if (wait > 0 && wait <= 30 * 60 * 1000 + RETRY_AFTER_SOURCE_UPDATE_MS) {
+      state.retryTimer = setTimeout(refresh, wait);
+    }
   }
 
   // ---- 이벤트 ----
@@ -324,9 +362,9 @@
     el.amt.value = n != null ? String(n) : (state.reversed ? "1000" : "1");
     convert();
   });
-  // 탭이 백그라운드였다가 돌아왔을 때 30분이 지났으면 바로 갱신
+  // 백그라운드 탭에선 타이머가 늦어질 수 있으니, 돌아왔을 때 놓친 갱신 시각이 있으면 바로 갱신
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" && Date.now() - state.lastAttempt >= REFRESH_MS) refresh();
+    if (document.visibilityState === "visible" && lastSlotAt(Date.now()) > state.lastAttempt) refresh();
   });
 
   // ---- 시작: 캐시 먼저 보여주고 최신값 요청 ----
@@ -335,7 +373,7 @@
   var initial = loadCache();
   if (initial) render(initial);
   refresh();
-  setInterval(refresh, REFRESH_MS);
+  scheduleNextSlot();
 })();
 </script>
 </body>
