@@ -188,8 +188,20 @@
 
   var state = { rate: null, reversed: false, lastAttempt: 0, timer: null, retryTimer: null };
 
-  // ---- 데이터 소스: 1순위 ExchangeRate-API(open), 2순위 fawazahmed0 currency-api (CDN 2곳) ----
+  // ---- 데이터 소스 ----
+  // 1순위 Coinbase 공개 환율(분 단위 시세, 응답에 시각이 없어 받아온 시각을 기준 시각으로 표시)
+  // 예비: ExchangeRate-API(open, 하루 1회) → fawazahmed0 currency-api (CDN 2곳, 하루 1회)
   var SOURCES = [
+    {
+      name: "Coinbase",
+      link: "https://www.coinbase.com",
+      url: "https://api.coinbase.com/v2/exchange-rates?currency=" + FROM,
+      parse: function (d) {
+        var r = d && d.data && d.data.rates && parseFloat(d.data.rates[TO]);
+        if (!(r > 0) || (d.data.currency || "").toUpperCase() !== FROM) throw new Error("bad data");
+        return { rate: r, updatedAt: Date.now(), dateOnly: false };
+      }
+    },
     {
       name: "ExchangeRate-API",
       link: "https://www.exchangerate-api.com",
