@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>환율 위젯</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #37352f;
+    --muted: rgba(55, 53, 47, 0.6);
+    --line: rgba(55, 53, 47, 0.16);
+    --field: rgba(242, 241, 238, 0.6);
+    --hover: rgba(55, 53, 47, 0.08);
+    --warn: #d44c47;
+    --accent: #2383e2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #191919;
+      --fg: rgba(255, 255, 255, 0.81);
+      --muted: rgba(255, 255, 255, 0.46);
+      --line: rgba(255, 255, 255, 0.13);
+      --field: rgba(255, 255, 255, 0.055);
+      --hover: rgba(255, 255, 255, 0.08);
+      --warn: #ff7369;
+      --accent: #529cca;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #191919;
+    --fg: rgba(255, 255, 255, 0.81);
+    --muted: rgba(255, 255, 255, 0.46);
+    --line: rgba(255, 255, 255, 0.13);
+    --field: rgba(255, 255, 255, 0.055);
+    --hover: rgba(255, 255, 255, 0.08);
+    --warn: #ff7369;
+    --accent: #529cca;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: Pretendard, "Pretendard Variable", -apple-system, BlinkMacSystemFont, system-ui,
+      "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .w {
+    width: 100%;
+    max-width: 640px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .rate {
+    font-size: clamp(22px, 6.2vw, 34px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rate .u { font-weight: 500; color: var(--muted); font-size: 0.6em; margin-left: 2px; }
+  .rate .eq { font-weight: 400; color: var(--muted); margin: 0 0.25em; }
+  .meta {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.4;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+    margin-top: -4px;
+  }
+  .meta a { color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2px; }
+  .meta a:hover { color: var(--fg); }
+  .err { color: var(--warn); font-weight: 500; }
+  .err:empty { display: none; }
+  .conv { display: flex; align-items: center; gap: 6px; }
+  .box {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 6px;
+    background: var(--field);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .box:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+  .box .c { font-size: 12px; font-weight: 600; color: var(--muted); flex: none; }
+  .box input, .box output {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    font-size: 15px;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .box input::placeholder { color: var(--muted); }
+  button.swap {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: background 0.15s, color 0.15s, transform 0.2s;
+  }
+  button.swap:hover { background: var(--hover); color: var(--fg); }
+  button.swap:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.swap.flip { transform: rotate(180deg); }
+  @media (max-width: 300px) {
+    .w { padding: 10px 12px; gap: 8px; }
+    .box { padding: 0 8px; }
+    .box input, .box output { font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+<main class="w">
+  <div class="rate" id="rate" aria-live="polite">1 USD <span class="eq">=</span> —</div>
+  <div class="meta">
+    <span id="time">불러오는 중…</span>
+    <span id="src"></span>
+    <span class="err" id="err" role="status"></span>
+  </div>
+  <div class="conv">
+    <label class="box">
+      <span class="c" id="inCode">USD</span>
+      <input id="amt" type="text" inputmode="decimal" autocomplete="off" value="1" aria-label="금액 입력">
+    </label>
+    <button class="swap" id="swap" type="button" title="방향 전환" aria-label="환산 방향 전환">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2.5 5.5h11M10.5 2.5l3 3-3 3M13.5 10.5h-11M5.5 7.5l-3 3 3 3"/>
+      </svg>
+    </button>
+    <div class="box">
+      <span class="c" id="outCode">KRW</span>
+      <output id="out" for="amt">—</output>
+    </div>
+  </div>
+</main>
+<script>
+(function () {
+  "use strict";
+
+  // ---- 설정 (URL 파라미터로 변경 가능: ?from=USD&to=KRW&theme=light|dark) ----
+  var params = new URLSearchParams(location.search);
+  var FROM = (params.get("from") || "USD").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3) || "USD";
+  var TO = (params.get("to") || "KRW").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3) || "KRW";
+  var theme = params.get("theme");
+  if (theme === "light" || theme === "dark") document.documentElement.setAttribute("data-theme", theme);
+
+  var REFRESH_MS = 30 * 60 * 1000;
+  var TIMEOUT_MS = 8000;
+  var CACHE_KEY = "fxw:" + FROM + ":" + TO;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var el = {
+    rate: $("rate"), time: $("time"), src: $("src"), err: $("err"),
+    amt: $("amt"), out: $("out"), inCode: $("inCode"), outCode: $("outCode"), swap: $("swap")
+  };
+
+  var state = { rate: null, reversed: false, lastAttempt: 0 };
+
+  // ---- 데이터 소스: 1순위 ExchangeRate-API(open), 2순위 fawazahmed0 currency-api (CDN 2곳) ----
+  var SOURCES = [
+    {
+      name: "ExchangeRate-API",
+      link: "https://www.exchangerate-api.com",
+      url: "https://open.er-api.com/v6/latest/" + FROM,
+      parse: function (d) {
+        if (!d || d.result !== "success" || !d.rates || typeof d.rates[TO] !== "number") throw new Error("bad data");
+        return { rate: d.rates[TO], updatedAt: d.time_last_update_unix * 1000, dateOnly: false };
+      }
+    },
+    {
+      name: "currency-api",
+      link: "https://github.com/fawazahmed0/exchange-api",
+      url: "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/" + FROM.toLowerCase() + ".min.json",
+      parse: parseFawaz
+    },
+    {
+      name: "currency-api",
+      link: "https://github.com/fawazahmed0/exchange-api",
+      url: "https://latest.currency-api.pages.dev/v1/currencies/" + FROM.toLowerCase() + ".min.json",
+      parse: parseFawaz
+    }
+  ];
+  function parseFawaz(d) {
+    var r = d && d[FROM.toLowerCase()] && d[FROM.toLowerCase()][TO.toLowerCase()];
+    if (typeof r !== "number" || !d.date) throw new Error("bad data");
+    return { rate: r, updatedAt: Date.parse(d.date + "T00:00:00Z"), dateOnly: true };
+  }
+
+  // ---- 포맷 ----
+  function fmtNum(n, cur, forRate) {
+    var digits;
+    if (forRate) digits = n >= 10 ? 2 : n >= 0.1 ? 4 : 6;
+    try {
+      if (forRate) return new Intl.NumberFormat("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
+      var f = new Intl.NumberFormat("ko-KR", { style: "currency", currency: cur }).resolvedOptions();
+      var max = f.maximumFractionDigits;
+      if (Math.abs(n) > 0 && Math.abs(n) < 1) max = Math.max(max, 4);
+      return new Intl.NumberFormat("ko-KR", { minimumFractionDigits: Math.min(f.minimumFractionDigits, max), maximumFractionDigits: max }).format(n);
+    } catch (e) {
+      return n.toFixed(2);
+    }
+  }
+  function fmtKST(ms, dateOnly) {
+    try {
+      var parts = {};
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+      }).formatToParts(new Date(ms)).forEach(function (p) { parts[p.type] = p.value; });
+      var d = parts.year + "-" + parts.month + "-" + parts.day;
+      return dateOnly ? d + " (일간 기준)" : d + " " + parts.hour + ":" + parts.minute + " (KST)";
+    } catch (e) {
+      return new Date(ms).toISOString().slice(0, 16).replace("T", " ") + " (UTC)";
+    }
+  }
+
+  // ---- 캐시 (localStorage는 막혀 있을 수 있으니 항상 try/catch) ----
+  function loadCache() {
+    try {
+      var raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      var c = JSON.parse(raw);
+      return c && typeof c.rate === "number" ? c : null;
+    } catch (e) { return null; }
+  }
+  function saveCache(c) {
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(c)); } catch (e) { /* 무시 */ }
+  }
+
+  // ---- 렌더 ----
+  function render(data) {
+    state.rate = data.rate;
+    el.rate.innerHTML = "1 " + FROM + ' <span class="eq">=</span> ' + fmtNum(data.rate, TO, true) + ' <span class="u">' + TO + "</span>";
+    el.time.textContent = "기준 시각: " + fmtKST(data.updatedAt, data.dateOnly);
+    el.src.innerHTML = "";
+    el.src.appendChild(document.createTextNode("출처: "));
+    var a = document.createElement("a");
+    a.href = data.link; a.target = "_blank"; a.rel = "noopener noreferrer";
+    a.textContent = data.source === "ExchangeRate-API" ? "Rates By Exchange Rate API" : data.source;
+    el.src.appendChild(a);
+    convert();
+  }
+  function showError(hasCache) {
+    el.err.textContent = hasCache ? "환율을 불러오지 못했어요 · 마지막 값 표시 중" : "환율을 불러오지 못했어요";
+    if (!hasCache) el.time.textContent = "잠시 후 다시 시도할게요";
+  }
+
+  function parseAmount(s) {
+    var n = parseFloat(String(s).replace(/[,\s]/g, ""));
+    return isFinite(n) ? n : null;
+  }
+  function convert() {
+    var n = parseAmount(el.amt.value);
+    if (state.rate == null || n == null) { el.out.textContent = "—"; return; }
+    var res = state.reversed ? n / state.rate : n * state.rate;
+    el.out.textContent = fmtNum(res, state.reversed ? FROM : TO, false);
+  }
+
+  // ---- 네트워크 ----
+  function fetchJSON(url) {
+    var ctrl = typeof AbortController === "function" ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, TIMEOUT_MS) : null;
+    return fetch(url, { cache: "no-cache", signal: ctrl ? ctrl.signal : undefined })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .finally(function () { if (timer) clearTimeout(timer); });
+  }
+
+  async function refresh() {
+    state.lastAttempt = Date.now();
+    for (var i = 0; i < SOURCES.length; i++) {
+      var s = SOURCES[i];
+      try {
+        var parsed = s.parse(await fetchJSON(s.url));
+        var data = { rate: parsed.rate, updatedAt: parsed.updatedAt, dateOnly: parsed.dateOnly, source: s.name, link: s.link, fetchedAt: Date.now() };
+        saveCache(data);
+        el.err.textContent = "";
+        render(data);
+        return;
+      } catch (e) { /* 다음 소스로 */ }
+    }
+    var cached = loadCache();
+    if (cached) render(cached);
+    showError(!!cached);
+  }
+
+  // ---- 이벤트 ----
+  el.amt.addEventListener("input", convert);
+  el.amt.addEventListener("focus", function () { el.amt.select(); });
+  el.swap.addEventListener("click", function () {
+    var cur = el.out.textContent;
+    state.reversed = !state.reversed;
+    el.inCode.textContent = state.reversed ? TO : FROM;
+    el.outCode.textContent = state.reversed ? FROM : TO;
+    el.swap.classList.toggle("flip", state.reversed);
+    var n = parseAmount(cur);
+    el.amt.value = n != null ? String(n) : (state.reversed ? "1000" : "1");
+    convert();
+  });
+  // 탭이 백그라운드였다가 돌아왔을 때 30분이 지났으면 바로 갱신
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible" && Date.now() - state.lastAttempt >= REFRESH_MS) refresh();
+  });
+
+  // ---- 시작: 캐시 먼저 보여주고 최신값 요청 ----
+  el.inCode.textContent = FROM;
+  el.outCode.textContent = TO;
+  var initial = loadCache();
+  if (initial) render(initial);
+  refresh();
+  setInterval(refresh, REFRESH_MS);
+})();
+</script>
+</body>
+</html>
